@@ -170,6 +170,19 @@ class Compressor(Turbomachine):
                 deriv=self.pr_deriv,
                 func=self.pr_func, func_params={'pr': 'pr'},
                 latex=self.pr_func_doc),
+            'N': dc_cp(min_val=1500, max_val=6000, d=1e-1, val=3000),
+            'N_eta_char': dc_cc(param='m'),
+            # 'N_power_char': dc_cc(),
+            'N_eta_group_char' : dc_gcp(
+                elements=['N', 'N_eta_char'], num_eq=1,
+                latex=self.char_map_eta_s_func_doc,
+                func=self.N_eta_group_char_func,
+                deriv=self.N_eta_group_char_deriv),
+            # 'N_power_group_char' : dc_gcp(
+            #     elements=['N', 'N_power_char'], num_eq=1,
+            #     latex=self.char_map_eta_s_func_doc,
+            #     func=self.N_power_group_char_func,
+            #     deriv=self.N_power_group_char_deriv),
             'igva': dc_cp(min_val=-90, max_val=90, d=1e-3, val=0),
             'char_map_eta_s': dc_cm(),
             'char_map_eta_s_group': dc_gcp(
@@ -525,6 +538,31 @@ class Compressor(Turbomachine):
         if self.igva.is_var:
             self.jacobian[k, 2 + self.igva.var_pos, 0] = self.numeric_deriv(
                 f, 'igva', 1)
+
+    def N_eta_group_char_func(self):
+        i = self.inl[0]
+        o = self.outl[0]
+        return (
+            self.N_eta_char.char_func.evaluate(self.N.val / self.N.design) *
+            self.eta_s.design * (o.h.val_SI - i.h.val_SI) - (isentropic(
+                i.get_flow(), o.get_flow(), T0=self.inl[0].T.val_SI) -
+                i.h.val_SI))
+
+    def N_eta_group_char_deriv(self, increment_filter, k):
+        f = self.N_eta_group_char_func
+        if not increment_filter[0, 1]:
+            self.jacobian[k, 0, 1] = self.numeric_deriv(f, 'p', 0)
+        if not increment_filter[0, 2]:
+            self.jacobian[k, 0, 2] = self.numeric_deriv(f, 'h', 0)
+
+        if not increment_filter[1, 1]:
+            self.jacobian[k, 1, 1] = self.numeric_deriv(f, 'p', 1)
+        if not increment_filter[1, 2]:
+            self.jacobian[k, 1, 2] = self.numeric_deriv(f, 'h', 1)
+
+        if self.N.is_var:
+            self.jacobian[k, 2 + self.N.var_pos, 0] = self.numeric_deriv(
+                f, 'N', 1)
 
     def convergence_check(self):
         r"""
