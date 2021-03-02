@@ -881,15 +881,14 @@ class Component:
                 expr = self.get_char_expr(data.param, **data.char_params)
                 if expr is not None:
                     data.char_func.get_domain_errors(expr, self.label)
-                else:
-                    print('test')
 
             elif isinstance(data, dc_gcc) and data.is_set:
                 for char in data.elements:
                     char_data = self.get_attr(char)
                     expr = self.get_char_expr(
                         char_data.param, **char_data.char_params)
-                    char_data.char_func.get_domain_errors(expr, self.label)
+                    if expr is not None:
+                        char_data.char_func.get_domain_errors(expr, self.label)
 
     def initialise_fluids(self):
         return
