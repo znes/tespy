@@ -171,7 +171,7 @@ class Compressor(Turbomachine):
                 func=self.pr_func, func_params={'pr': 'pr'},
                 latex=self.pr_func_doc),
             'N': dc_cp(min_val=1500, max_val=6000, d=1e-1, val=3000),
-            'N_eta_char': dc_cc(param='m'),
+            'N_eta_char': dc_cc(),
             # 'N_power_char': dc_cc(),
             'N_eta_group_char' : dc_gcp(
                 elements=['N', 'N_eta_char'], num_eq=1,

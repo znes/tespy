@@ -446,6 +446,8 @@ class Component:
         expr : float
             Value of expression
         """
+        if param is None:
+            return None
         if type == 'rel':
             if param == 'm':
                 return (
@@ -513,6 +515,8 @@ class Component:
         expr : str
             LaTeX code for documentation
         """
+        if param is None:
+            return r'\text{Parameter missing}'
         if type == 'rel':
             if param == 'm':
                 return (
@@ -875,7 +879,10 @@ class Component:
 
             elif isinstance(data, dc_cc) and data.is_set:
                 expr = self.get_char_expr(data.param, **data.char_params)
-                data.char_func.get_domain_errors(expr, self.label)
+                if expr is not None:
+                    data.char_func.get_domain_errors(expr, self.label)
+                else:
+                    print('test')
 
             elif isinstance(data, dc_gcc) and data.is_set:
                 for char in data.elements:
