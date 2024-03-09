@@ -830,9 +830,11 @@ class HeatExchanger(Component):
         for i in range(2):
             self.get_attr('pr' + str(i + 1)).val = (
                 self.outl[i].p.val_SI / self.inl[i].p.val_SI)
-            self.get_attr('zeta' + str(i + 1)).val = self.calc_zeta(
-                self.inl[i], self.outl[i]
-            )
+            self.get_attr('zeta' + str(i + 1)).val = (
+                (self.inl[i].p.val_SI - self.outl[i].p.val_SI) * np.pi ** 2 / (
+                    4 * self.inl[i].m.val_SI ** 2 *
+                    (self.inl[i].vol.val_SI + self.outl[i].vol.val_SI)
+                ))
 
         # kA and logarithmic temperature difference
         if self.ttd_u.val < 0 or self.ttd_l.val < 0:
@@ -840,10 +842,8 @@ class HeatExchanger(Component):
         elif self.ttd_l.val == self.ttd_u.val:
             self.td_log.val = self.ttd_l.val
         else:
-            self.td_log.val = (
-                (self.ttd_l.val - self.ttd_u.val)
-                / np.log(self.ttd_l.val / self.ttd_u.val)
-            )
+            self.td_log.val = ((self.ttd_l.val - self.ttd_u.val) /
+                               np.log(self.ttd_l.val / self.ttd_u.val))
         self.kA.val = -self.Q.val / self.td_log.val
 
     def entropy_balance(self):
@@ -1023,6 +1023,7 @@ class HeatExchanger(Component):
                 self.outl[1].Ex_physical + self.outl[0].Ex_mech)
         elif (self.inl[0].T.val_SI > T0 and self.outl[0].T.val_SI > T0 and
               self.inl[1].T.val_SI <= T0 and self.outl[1].T.val_SI <= T0):
+            self.dissipative.val = True
             self.E_P = np.nan
             self.E_F = self.inl[0].Ex_physical - self.outl[0].Ex_physical + (
                 self.inl[1].Ex_physical - self.outl[1].Ex_physical)
@@ -1037,6 +1038,388 @@ class HeatExchanger(Component):
         else:
             self.E_D = self.E_F - self.E_P
         self.epsilon = self._calc_epsilon()
+
+    """+F+F+F+F++++START++++F+F+F+F+"""
+
+    def exergoeconomic_balance(self, T0):
+        if self.dissipative.val:
+            self.C_P = np.nan
+            self.C_F = self.inl[0].C_tot + self.inl[1].C_tot
+        elif all([c.T.val_SI > T0 for c in self.inl + self.outl]):
+            self.C_P = self.outl[1].C_therm - self.inl[1].C_therm
+            self.C_F = self.inl[0].C_physical - self.outl[0].C_physical + (
+                self.inl[1].C_mech - self.outl[1].C_mech)
+        elif all([c.T.val_SI <= T0 for c in self.inl + self.outl]):
+            self.C_P = self.outl[0].C_therm - self.inl[0].C_therm
+            self.C_F = self.inl[1].C_physical - self.outl[1].C_physical + (
+                self.inl[0].C_mech - self.outl[0].C_mech)
+        elif (self.inl[0].T.val_SI > T0 and self.outl[1].T.val_SI > T0 and
+              self.outl[0].T.val_SI <= T0 and self.inl[1].T.val_SI <= T0):
+            self.C_P = self.outl[0].C_therm + self.outl[1].C_therm
+            self.C_F = self.inl[0].C_physical + self.inl[1].C_physical - (
+                self.outl[0].C_mech + self.outl[1].C_mech)
+        elif (self.inl[0].T.val_SI > T0 and self.inl[1].T.val_SI <= T0 and
+              self.outl[0].T.val_SI <= T0 and self.outl[1].T.val_SI <= T0):
+            self.C_P = self.outl[0].C_therm
+            self.C_F = self.inl[0].C_physical + self.inl[1].C_physical - (
+               self.outl[1].C_physical + self.outl[0].C_mech)
+        else:
+            self.C_P = self.outl[1].C_therm
+            self.C_F = self.inl[0].C_physical - self.outl[0].C_physical + (
+                self.inl[1].C_physical - self.outl[1].C_mech)
+
+        print(self.label, "difference C_P = ", self.C_P, "-", self.C_F + self.Z_costs, "=", self.C_P - (self.C_F + self.Z_costs))
+
+        self.c_F = self.C_F / self.E_F
+        self.c_P = self.C_P / self.E_P
+        self.C_D = self.c_F * self.E_D
+        self.r = (self.C_P - self.C_F) / self.C_F
+        self.f = self.Z_costs / (self.Z_costs + self.C_D)
+
+    def dissipative_balance(self, exergy_cost_matrix, exergy_cost_vector, counter, T0):
+        # nothing changes for the working fluid
+        # therm1
+        if self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm != 0:
+            exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm
+            exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1 / self.outl[0].Ex_therm
+        elif self.inl[0].Ex_therm == 0 and self.outl[0].Ex_therm != 0:
+            exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+        elif self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm == 0:
+            exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = 1
+        else:
+            exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+            exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1
+        # therm2
+        if self.inl[1].Ex_therm != 0 and self.outl[1].Ex_therm != 0:
+            exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm
+            exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["therm"]] = -1 / self.outl[0].Ex_therm
+        elif self.inl[1].Ex_therm == 0 and self.outl[1].Ex_therm != 0:
+            exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["therm"]] = 1
+        elif self.inl[1].Ex_therm != 0 and self.outl[1].Ex_therm == 0:
+            exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["therm"]] = 1
+        else:
+            exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["therm"]] = 1
+            exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["therm"]] = -1
+        # mech1
+        if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+            exergy_cost_matrix[counter+2, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+            exergy_cost_matrix[counter+2, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+        elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+            exergy_cost_matrix[counter+2, self.inl[0].Ex_C_col["mech"]] = 1
+        elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+            exergy_cost_matrix[counter+2, self.outl[0].Ex_C_col["mech"]] = 1
+        else:
+            exergy_cost_matrix[counter+2, self.inl[0].Ex_C_col["mech"]] = 1
+            exergy_cost_matrix[counter+2, self.outl[0].Ex_C_col["mech"]] = 1
+        # mech2
+        if self.outl[1].Ex_mech != 0 and self.outl[1].Ex_mech != 0:
+            exergy_cost_matrix[counter+3, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+            exergy_cost_matrix[counter+3, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+        elif self.outl[1].Ex_mech == 0 and self.outl[1].Ex_mech != 0:
+            exergy_cost_matrix[counter+3, self.inl[1].Ex_C_col["mech"]] = 1
+        elif self.outl[1].Ex_mech != 0 and self.outl[1].Ex_mech == 0:
+            exergy_cost_matrix[counter+3, self.outl[1].Ex_C_col["mech"]] = 1
+        else:
+            exergy_cost_matrix[counter+3, self.inl[1].Ex_C_col["mech"]] = 1
+            exergy_cost_matrix[counter+3, self.outl[1].Ex_C_col["mech"]] = -1
+        # chem doesn't change
+        # chem1
+        exergy_cost_matrix[counter+4, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+        exergy_cost_matrix[counter+4, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+        # chem2
+        exergy_cost_matrix[counter+5, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else 1
+        exergy_cost_matrix[counter+5, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+        for i in range(6):
+            exergy_cost_vector[counter+i]=0
+
+        # füge die dissipativen Kosten der Komponente(n) zu, die davon profitiert/-en
+        if self.serving_components is None:
+            print("there should be a serving component, you shouldn't see this")
+        for comp in self.serving_components:
+            print("serving component: ", comp.label)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["therm"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[1].Ex_C_col["therm"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[0].Ex_C_col["therm"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[1].Ex_C_col["therm"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["mech"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[1].Ex_C_col["mech"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[0].Ex_C_col["mech"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[1].Ex_C_col["mech"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["chemical"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[1].Ex_C_col["chemical"]] += 1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[0].Ex_C_col["chemical"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.outl[1].Ex_C_col["chemical"]] += -1 / len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.Z_col] = 1 / len(self.serving_components)
+
+        exergy_cost_matrix[counter+6, self.Z_col] = 1
+        exergy_cost_vector[counter+6] = self.Z_costs
+
+        return [exergy_cost_matrix, exergy_cost_vector, counter+7]
+
+
+    def aux_eqs(self, exergy_cost_matrix, exergy_cost_vector, counter, T0):
+        # inserts aux eqs into matrix and vector
+        if all([c.T.val_SI > T0 for c in self.inl + self.outl]):
+            # therm1
+            if self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1 / self.outl[0].Ex_therm
+            elif self.inl[0].Ex_therm == 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+            elif self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm == 0:
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and  self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and  self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and  self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1
+
+            # chemical doesn't change
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+        elif all([c.T.val_SI <= T0 for c in self.inl + self.outl]):
+            # therm2
+            if self.inl[1].Ex_therm != 0 and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1 / self.inl[1].Ex_therm
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = -1 / self.outl[1].Ex_therm
+            elif self.inl[1].Ex_therm == 0 and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1
+            elif self.inl[1].Ex_therm != 0 and self.outl[1].Ex_therm == 0:
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = -1
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1
+            else:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1
+            # chem doesn't change, either 0 in and out or not 0 in and out
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+
+        elif (self.inl[0].T.val_SI > T0 and self.outl[1].T.val_SI > T0 and
+              self.outl[0].T.val_SI <= T0 and self.inl[1].T.val_SI <= T0):
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = -1
+            # two products c^T_out1 = c^T_out2
+            if self.outl[0].Ex_therm != 0 and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+4, self.outl[0].Ex_C_col["therm"]] = 1 / self.outl[0].Ex_therm
+                exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["therm"]] = -1 / self.outl[1].Ex_therm
+            elif self.outl[0].Ex_therm == 0 and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+4, self.outl[0].Ex_C_col["therm"]] = 1
+            elif self.outl[0].Ex_therm != 0 and self.outl[1].Ex_therm == 0:
+                exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+4, self.outl[0].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["therm"]] = -1
+            # chemical doesn't change
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+
+        elif (self.inl[0].T.val_SI > T0 and self.inl[1].T.val_SI <= T0 and
+              self.outl[0].T.val_SI <= T0 and self.outl[1].T.val_SI <= T0):
+            # therm2
+            if self.inl[1].Ex_therm != 0  and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1 / self.inl[1].Ex_therm
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = -1 / self.outl[1].Ex_therm
+            elif self.inl[1].Ex_therm == 0  and self.outl[1].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1
+            elif self.inl[1].Ex_therm != 0  and self.outl[1].Ex_therm == 0:
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[1].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[1].Ex_C_col["therm"]] = -1
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[1].Ex_C_col["mech"]] = -1
+            # chemical doesn't change
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+
+        elif (self.inl[0].T.val_SI > T0 and self.inl[1].T.val_SI <= T0 and
+              self.outl[0].T.val_SI > T0 and self.outl[1].T.val_SI > T0):
+            # therm1
+            if self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1 / self.outl[0].Ex_therm
+            elif self.inl[0].Ex_therm == 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+            elif self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm == 0:
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1
+
+            # chem doesn't change, either 0 in and out or not 0 in and out
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+        elif (self.inl[0].T.val_SI > T0 and self.inl[1].T.val_SI <= T0 and
+              self.outl[0].T.val_SI > T0 and self.outl[1].T.val_SI <= T0):
+            # dissipative, should not reach this point in the programm
+            print("you shouldn't see this")
+            return
+
+        else:
+            # therm1
+            if self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1 / self.outl[0].Ex_therm
+            elif self.inl[0].Ex_therm == 0 and self.outl[0].Ex_therm != 0:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+            elif self.inl[0].Ex_therm != 0 and self.outl[0].Ex_therm == 0:
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = 1
+            else:
+                exergy_cost_matrix[counter+0, self.inl[0].Ex_C_col["therm"]] = 1
+                exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = -1
+            # mech1
+            if self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+            elif self.inl[0].Ex_mech == 0 and self.outl[0].Ex_mech != 0:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+            elif self.inl[0].Ex_mech != 0 and self.outl[0].Ex_mech == 0:
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+1, self.inl[0].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+1, self.outl[0].Ex_C_col["mech"]] = -1
+            # mech2
+            if self.inl[1].Ex_mech != 0 and  self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1 / self.inl[1].Ex_mech
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1 / self.outl[1].Ex_mech
+            elif self.inl[1].Ex_mech == 0 and  self.outl[1].Ex_mech != 0:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+            elif self.inl[1].Ex_mech != 0 and  self.outl[1].Ex_mech == 0:
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = 1
+            else:
+                exergy_cost_matrix[counter+2, self.inl[1].Ex_C_col["mech"]] = 1
+                exergy_cost_matrix[counter+2, self.outl[1].Ex_C_col["mech"]] = -1
+
+            # chemical doesn't change
+            exergy_cost_matrix[counter+3, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3, self.outl[0].Ex_C_col["chemical"]] = -1 / self.outl[0].Ex_chemical if self.outl[0].Ex_chemical != 0 else -1
+            exergy_cost_matrix[counter+4, self.inl[1].Ex_C_col["chemical"]] = 1 / self.inl[1].Ex_chemical if self.inl[1].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+4, self.outl[1].Ex_C_col["chemical"]] = -1 / self.outl[1].Ex_chemical if self.outl[1].Ex_chemical != 0 else -1
+
+        for i in range(5):
+            exergy_cost_vector[counter+i]=0
+        return [exergy_cost_matrix, exergy_cost_vector, counter+5]
+    """+F+F+F+F++++END++++F+F+F+F+"""
+
 
     def get_plotting_data(self):
         """Generate a dictionary containing FluProDia plotting information.

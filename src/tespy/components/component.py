@@ -12,6 +12,8 @@ available from its original location tespy/components/components.py
 SPDX-License-Identifier: MIT
 """
 
+from collections import OrderedDict
+
 import numpy as np
 
 from tespy.tools import logger
@@ -99,8 +101,8 @@ class Component:
 
         elif any([True for x in _forbidden if x in label]):
             msg = (
-                f"You cannot use any of " + ", ".join(_forbidden) + " in a "
-                f"component label ({self.component()}"
+                    f"You cannot use any of " + ", ".join(_forbidden) + " in a "
+                                                                        f"component label ({self.component()}"
             )
             logger.error(msg)
             raise ValueError(msg)
@@ -120,9 +122,29 @@ class Component:
         self.fkt_group = self.label
 
         # add container for components attributes
-        self.parameters = self.get_parameters().copy()
+        self.parameters = OrderedDict(self.get_parameters().copy())
         self.__dict__.update(self.parameters)
         self.set_attr(**kwargs)
+
+        """+F+F+F+F++++START++++F+F+F+F+"""
+        # needed for cycle closer, source, sink
+        self.Z_costs = np.nan  # will be overwritten in each component
+        self.C_F = np.nan
+        self.C_P = np.nan
+        self.c_F = np.nan
+        self.c_P = np.nan
+        self.C_D = np.nan
+        self.C_L = np.nan
+        self.r = np.nan
+        self.f = np.nan
+        self.C_bus = np.nan
+        self.c_bus = {}
+        self.c_bus["bus"] = np.nan
+        self.c_bus["component"] = np.nan
+        self.dissipative = dc_simple(val=False)
+        self.serving_components = None
+        self.exergy_cost_line = np.nan
+        """+F+F+F+F++++END++++F+F+F+F+"""
 
     def set_attr(self, **kwargs):
         r"""
@@ -340,7 +362,7 @@ class Component:
         self.num_eq = 0
         self.vars = {}
         self.num_vars = 0
-        self.constraints = self.get_mandatory_constraints().copy()
+        self.constraints = OrderedDict(self.get_mandatory_constraints().copy())
         self.prop_specifications = {}
         self.var_specifications = {}
         self.group_specifications = {}
@@ -413,7 +435,7 @@ class Component:
             if data.is_set and data.func is not None:
                 self.num_eq += data.num_eq
 
-        self.jacobian = {}
+        self.jacobian = OrderedDict()
         self.residual = np.zeros(self.num_eq)
 
         sum_eq = 0
@@ -488,10 +510,10 @@ class Component:
                 return v / self.inl[inconn].v.design
             elif param == 'pr':
                 return (
-                    (self.outl[outconn].p.val_SI *
-                     self.inl[inconn].p.design) /
-                    (self.inl[inconn].p.val_SI *
-                     self.outl[outconn].p.design))
+                        (self.outl[outconn].p.val_SI *
+                         self.inl[inconn].p.design) /
+                        (self.inl[inconn].p.val_SI *
+                         self.outl[outconn].p.design))
             else:
                 msg = (
                     f"The parameter {param}) is not available for "
@@ -544,26 +566,26 @@ class Component:
         if type == 'rel':
             if param == 'm':
                 return (
-                    r'\frac{\dot{m}_\mathrm{in,' + str(inconn + 1) + r'}}'
-                    r'{\dot{m}_\mathrm{in,' + str(inconn + 1) +
-                    r',design}}')
+                        r'\frac{\dot{m}_\mathrm{in,' + str(inconn + 1) + r'}}'
+                                                                         r'{\dot{m}_\mathrm{in,' + str(inconn + 1) +
+                        r',design}}')
             elif param == 'm_out':
                 return (
-                    r'\frac{\dot{m}_\mathrm{out,' + str(outconn + 1) +
-                    r'}}{\dot{m}_\mathrm{out,' + str(outconn + 1) +
-                    r',design}}')
+                        r'\frac{\dot{m}_\mathrm{out,' + str(outconn + 1) +
+                        r'}}{\dot{m}_\mathrm{out,' + str(outconn + 1) +
+                        r',design}}')
             elif param == 'v':
                 return (
-                    r'\frac{\dot{V}_\mathrm{in,' + str(inconn + 1) + r'}}'
-                    r'{\dot{V}_\mathrm{in,' + str(inconn + 1) +
-                    r',design}}')
+                        r'\frac{\dot{V}_\mathrm{in,' + str(inconn + 1) + r'}}'
+                                                                         r'{\dot{V}_\mathrm{in,' + str(inconn + 1) +
+                        r',design}}')
             elif param == 'pr':
                 return (
-                    r'\frac{p_\mathrm{out,' + str(outconn + 1) +
-                    r'}\cdot p_\mathrm{in,' + str(inconn + 1) +
-                    r',design}}{p_\mathrm{out,' + str(outconn + 1) +
-                    r',design}\cdot p_\mathrm{in,' + str(inconn + 1) +
-                    r'}}')
+                        r'\frac{p_\mathrm{out,' + str(outconn + 1) +
+                        r'}\cdot p_\mathrm{in,' + str(inconn + 1) +
+                        r',design}}{p_\mathrm{out,' + str(outconn + 1) +
+                        r',design}\cdot p_\mathrm{in,' + str(inconn + 1) +
+                        r'}}')
         else:
             if param == 'm':
                 return r'\dot{m}_\mathrm{in,' + str(inconn + 1) + r'}'
@@ -573,8 +595,8 @@ class Component:
                 return r'\dot{V}_\mathrm{in,' + str(inconn + 1) + r'}'
             elif param == 'pr':
                 return (
-                    r'\frac{p_\mathrm{out,' + str(outconn + 1) +
-                    r'}}{p_\mathrm{in,' + str(inconn + 1) + r'}}')
+                        r'\frac{p_\mathrm{out,' + str(outconn + 1) +
+                        r'}}{p_\mathrm{in,' + str(inconn + 1) + r'}}')
 
     def solve(self, increment_filter):
         """
@@ -819,20 +841,20 @@ class Component:
         for p in self.parameters.keys():
             data = self.get_attr(p)
             if isinstance(data, dc_cp):
-                if data.val > data.max_val + ERR :
+                if data.val > data.max_val + ERR:
                     msg = (
-                        f"Invalid value for {p}: {p} = {data.val} above "
-                        f"maximum value ({data.max_val}) at component "
-                        f"{self.label}."
-                    )
+                            'Invalid value for ' + p + ': ' + p + ' = ' +
+                            str(data.val) + ' above maximum value (' +
+                            str(data.max_val) + ') at component ' + self.label +
+                            '.')
                     logger.warning(msg)
 
-                elif data.val < data.min_val - ERR :
+                elif data.val < data.min_val - ERR:
                     msg = (
-                        f"Invalid value for {p}: {p} = {data.val} below "
-                        f"minimum value ({data.max_val}) at component "
-                        f"{self.label}."
-                    )
+                            'Invalid value for ' + p + ': ' + p + ' = ' +
+                            str(data.val) + ' below minimum value (' +
+                            str(data.min_val) + ') at component ' + self.label +
+                            '.')
                     logger.warning(msg)
 
             elif isinstance(data, dc_cc) and data.is_set:
@@ -869,6 +891,12 @@ class Component:
         }
         self.E_D = np.nan
         self.epsilon = self._calc_epsilon()
+
+    """+F+F+F+F++++START++++F+F+F+F+"""
+    def exergoeconomic_balance(self, T0):
+        # will be overwritten in each component
+        return
+    """+F+F+F+F++++END++++F+F+F+F+"""
 
     def _calc_epsilon(self):
         if self.E_F == 0:
@@ -917,8 +945,8 @@ class Component:
         else:
             indices = str(indices[0])
         latex = (
-            r'0=p_{\mathrm{in,}i}-p_{\mathrm{out,}i}'
-            r'\; \forall i \in [' + indices + r']')
+                r'0=p_{\mathrm{in,}i}-p_{\mathrm{out,}i}'
+                r'\; \forall i \in [' + indices + r']')
         return generate_latex_eq(self, latex, label)
 
     def pressure_equality_deriv(self, k):
@@ -975,9 +1003,8 @@ class Component:
         else:
             indices = str(indices[0])
         latex = (
-            r'0=h_{\mathrm{in,}i}-h_{\mathrm{out,}i}'
-            r'\; \forall i \in [' + indices + r']'
-        )
+                r'0=h_{\mathrm{in,}i}-h_{\mathrm{out,}i}'
+                r'\; \forall i \in [' + indices + r']')
         return generate_latex_eq(self, latex, label)
 
     def enthalpy_equality_deriv(self, k):
@@ -1030,7 +1057,8 @@ class Component:
                 0 = p_{in} \cdot pr - p_{out}
         """
         pr = self.get_attr(pr)
-        return self.inl[inconn].p.val_SI * pr.val - self.outl[outconn].p.val_SI
+        return (self.inl[inconn].p.val_SI * pr.val -
+                self.outl[outconn].p.val_SI)
 
     def pr_func_doc(self, label, pr='', inconn=0, outconn=0):
         r"""
@@ -1054,8 +1082,8 @@ class Component:
             Residual value of function.
         """
         latex = (
-            r'0=p_\mathrm{in,' + str(inconn + 1) + r'}\cdot ' + pr +
-            r' - p_\mathrm{out,' + str(outconn + 1) + r'}'
+                r'0=p_\mathrm{in,' + str(inconn + 1) + r'}\cdot ' + pr +
+                r' - p_\mathrm{out,' + str(outconn + 1) + r'}'
         )
         return generate_latex_eq(self, latex, label)
 
@@ -1153,8 +1181,8 @@ class Component:
             v_i = v_mix_ph(i.p.val_SI, i.h.val_SI, i.fluid_data, i.mixing_rule, T0=i.T.val_SI)
             v_o = v_mix_ph(o.p.val_SI, o.h.val_SI, o.fluid_data, o.mixing_rule, T0=o.T.val_SI)
             return (
-                data.val - (i.p.val_SI - o.p.val_SI) * np.pi ** 2
-                / (8 * abs(i.m.val_SI) * i.m.val_SI * (v_i + v_o) / 2)
+                    data.val - (i.p.val_SI - o.p.val_SI) * np.pi ** 2
+                    / (8 * abs(i.m.val_SI) * i.m.val_SI * (v_i + v_o) / 2)
             )
 
     def zeta_func_doc(self, label, zeta='', inconn=0, outconn=0):
@@ -1181,14 +1209,14 @@ class Component:
         inl = r'_\mathrm{in,' + str(inconn + 1) + r'}'
         outl = r'_\mathrm{out,' + str(outconn + 1) + r'}'
         latex = (
-            r'0 = \begin{cases}' + '\n' +
-            r'p' + inl + r'- p' + outl + r' & |\dot{m}' + inl +
-            r'| < \unitfrac[0.0001]{kg}{s} \\' + '\n' +
-            r'\frac{\zeta}{D^4}-\frac{(p' + inl + r'-p' + outl + r')'
-            r'\cdot\pi^2}{8\cdot\dot{m}' + inl + r'\cdot|\dot{m}' + inl +
-            r'|\cdot\frac{v' + inl + r' + v' + outl + r'}{2}}' +
-            r'& |\dot{m}' + inl + r'| \geq \unitfrac[0.0001]{kg}{s}' + '\n'
-            r'\end{cases}'
+                r'0 = \begin{cases}' + '\n' +
+                r'p' + inl + r'- p' + outl + r' & |\dot{m}' + inl +
+                r'| < \unitfrac[0.0001]{kg}{s} \\' + '\n' +
+                r'\frac{\zeta}{D^4}-\frac{(p' + inl + r'-p' + outl + r')'
+                                                                     r'\cdot\pi^2}{8\cdot\dot{m}' + inl + r'\cdot|\dot{m}' + inl +
+                r'|\cdot\frac{v' + inl + r' + v' + outl + r'}{2}}' +
+                r'& |\dot{m}' + inl + r'| \geq \unitfrac[0.0001]{kg}{s}' + '\n'
+                                                                           r'\end{cases}'
         )
         return generate_latex_eq(self, latex, label)
 
@@ -1232,3 +1260,26 @@ class Component:
         # custom variable zeta
         if data.is_var:
             self.jacobian[k, data.J_col] = self.numeric_deriv(f, zeta, None, **kwargs)
+
+
+    """+F+F+F+F++++START++++F+F+F+F+"""
+    def dissipative_balance(self, exergy_cost_matrix, exergy_cost_vector, counter, T0):
+        return
+
+    def exergoeconomic_balance(self, T0):
+        return
+
+    # @Z_costs.setter
+    def set_Z_costs(self, value=0):
+        self.Z_costs = value
+
+    def set_Z_costs_standard(self):
+        # if no Z cost is given by user, implement standard price functions for each component
+        self.Z_costs = 0  # to be implemented in each component
+
+    def aux_eqs(self, exergy_cost_matrix, exergy_cost_vector, counter, T0):
+        return [exergy_cost_matrix, exergy_cost_vector, counter]
+
+    def calc_C_L(self):
+        self.C_L = self.C_P - self.C_F - self.Z_costs
+    """+F+F+F+F++++END++++F+F+F+F+"""

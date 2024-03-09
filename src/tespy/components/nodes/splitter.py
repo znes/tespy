@@ -210,3 +210,92 @@ class Splitter(NodeBase):
                 self.jacobian[k + eq, self.inl[0].h.J_col] = 1
             if o.h.is_var:
                 self.jacobian[k + eq, o.h.J_col] = -1
+
+    def exergy_balance(self, T0):
+        r"""
+        Calculate exergy balance of a Splitter.
+
+        Parameters
+        ----------
+        T0 : float
+            Ambient temperature T0 / K.
+
+        Note
+        ----
+        no exergy is being produced or destroyed.
+
+        .. math::
+
+        """
+        self.E_P = sum(conn.Ex_physical for conn in self.outl)
+        self.E_F = self.inl[0].Ex_physical
+
+        self.E_bus = {
+            "chemical": np.nan, "physical": np.nan, "massless": np.nan
+        }
+        self.E_D = self.E_F - self.E_P
+        self.epsilon = self.E_P / self.E_F
+        self.dissipative.val = True
+
+    def exergoeconomic_balance(self, T0):
+        self.C_P = np.nan
+        self.C_F = self.inl[0].C_physical
+
+        print("difference C_P = ", self.C_P, "-", self.C_F + self.Z_costs, "=", self.C_P - (self.C_F + self.Z_costs))
+
+        self.c_F = self.C_F / self.E_F
+        self.c_P = self.C_P / self.E_P
+        self.C_D = self.c_F * self.E_D
+        self.r = (self.C_P - self.C_F) / self.C_F
+        self.f = self.Z_costs / (self.Z_costs + self.C_D)
+
+
+    def dissipative_balance(self, exergy_cost_matrix, exergy_cost_vector, counter, T0):
+        # either all Ex 0 or or unequal 0
+        for i, o in enumerate(self.outl):
+            exergy_cost_matrix[counter+3*i, self.inl[0].Ex_C_col["therm"]] = 1 / self.inl[0].Ex_therm if self.inl[0].Ex_therm != 0 else 1
+            exergy_cost_matrix[counter+3*i, o.Ex_C_col["therm"]] = -1 / o.Ex_therm if o.Ex_therm != 0 else -1
+            exergy_cost_matrix[counter+3*i+1, self.inl[0].Ex_C_col["mech"]] = 1 / self.inl[0].Ex_mech if self.inl[0].Ex_mech != 0 else 1
+            exergy_cost_matrix[counter+3*i+1, o.Ex_C_col["mech"]] = -1 / o.Ex_mech if o.Ex_mech != 0 else .1
+            exergy_cost_matrix[counter+3*i+2, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical if self.inl[0].Ex_chemical != 0 else 1
+            exergy_cost_matrix[counter+3*i+2, o.Ex_C_col["chemical"]] = -1 / o.Ex_chemical if o.Ex_chemical != 0 else -1
+
+        for i in range(len(self.outl)):
+            exergy_cost_vector[counter+i]=0
+
+        # füge die dissipativen Kosten der Komponente(n) zu, die davon profitiert/-en
+        if self.serving_components is None:
+            print("there should be a serving component, you shouldn't see this")
+        for comp in self.serving_components:
+            print("serving component: ", comp.label)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["therm"]] += 1/len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["mech"]] += 1/len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.inl[0].Ex_C_col["chemical"]] += 1/len(self.serving_components)
+            exergy_cost_matrix[comp.exergy_cost_line, self.Z_col] = 1/len(self.serving_components)
+            for o in self.outl:
+                exergy_cost_matrix[comp.exergy_cost_line, self.o.Ex_C_col["therm"]] += -1/len(self.serving_components)
+                exergy_cost_matrix[comp.exergy_cost_line, self.o.Ex_C_col["mech"]] += -1/len(self.serving_components)
+                exergy_cost_matrix[comp.exergy_cost_line, self.o.Ex_C_col["chemical"]] += -1/len(self.serving_components)
+
+        exergy_cost_matrix[counter+3*(len(self.outl)-1)+3, self.Z_col] = 1
+        exergy_cost_vector[counter+3*(len(self.outl)-1)+3] = self.Z_costs
+
+        return [exergy_cost_matrix, exergy_cost_vector, counter+3*(len(self.outl)-1)+3]
+
+        """
+        exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["therm"]] = 1 / self.outl[0].Ex_therm
+        exergy_cost_matrix[counter+0, self.outl[0].Ex_C_col["mech"]] = -1 / self.outl[0].Ex_mech
+        for i in range (len(self.outl)-1):
+            exergy_cost_matrix[counter+1+2*i, self.outl[i].Ex_C_col["therm"]] = 1 / self.outl[i].Ex_therm
+            exergy_cost_matrix[counter+1+2*i, self.outl[i+1].Ex_C_col["therm"]] = -1 / self.outl[i+1].Ex_therm
+            exergy_cost_matrix[counter+1+2*i+1, self.outl[i].Ex_C_col["mech"]] = 1 / self.outl[i].Ex_mech
+            exergy_cost_matrix[counter+1+2*i+1, self.outl[i+1].Ex_C_col["mech"]] = -1 / self.outl[i+1].Ex_mech
+        for i in range (len(self.outl)):
+            exergy_cost_matrix[counter+1+2*(len(self.outl)-1) + i, self.inl[0].Ex_C_col["chemical"]] = 1 / self.inl[0].Ex_chemical
+            exergy_cost_matrix[counter+1+2*(len(self.outl)-1) + i, self.outl[i].Ex_C_col["chemical"]] = -1 / self.outl[i].Ex_chemical
+
+        for i in range(1+2*(len(self.outl)-1)+len(self.outl)):
+            exergy_cost_vector[counter+i]=0
+
+        return [exergy_cost_matrix, exergy_cost_vector, counter+1+2*(len(self.outl)-1)+len(self.outl)]
+        """
